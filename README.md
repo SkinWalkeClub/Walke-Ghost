@@ -1,8 +1,12 @@
+<p align="center">
+  <img src="https://media.discordapp.net/attachments/1554722448589594754/1554730183251075182/content.png?backend=b2&ex=6abdf2d1&is=6abca151&hm=fe81aad7d5e2cd528e6b4d568ad482f3bc0c5ac0d8cf6d763b0fd7ff92c236bf&=&format=webp&quality=lossless&width=640&height=640" width="600" alt="Walke Serializer">
+</p>
+
 # Walke Ghost
 
-A sandbox for running scripts you do not trust.
+A sandbox for running scripts you do not trust
 
-You paste a "free aimbot" or some random script from a Discord server and hit execute. If that script quietly steals your data or drops a backdoor, you never find out until it is too late. Walke Ghost runs the script inside a fake isolated environment first. The script thinks it has full access but it cannot actually touch anything real, and Ghost writes down every dangerous thing it tried to do. You read the report, and then you decide if it is safe to run for real.
+You paste a "free aimbot" or some random script from a Discord server and hit execute. If that script quietly steals your data or drops a backdoor, you never find out until it is too late. Walke Ghost runs the script inside a fake isolated environment first. The script thinks it has full access but it cannot actually touch anything real, and Ghost writes down every dangerous thing it tried to do. You read the report, and then you decide if it is safe to run for real
 
 Think of it as opening a suspicious file inside a virtual machine instead of on your main PC.
 
@@ -17,7 +21,6 @@ Think of it as opening a suspicious file inside a virtual machine instead of on 
 
 Read this part so you are not surprised.
 
-- **It is not an anti-cheat bypass and it does not make you invisible to games.** This protects YOU from a malicious script. It does nothing to hide you from a game's detection. That is a different problem and honestly nobody can promise to solve it.
 - **It reads globals through to the real ones so normal code works.** `print`, `math`, `game`, `workspace` and so on all work normally. Isolation is about WRITES and about the sensitive functions, not about blinding the script to everything.
 - **A determined script can still waste your time or spam.** Ghost stops it from writing, sending, and hooking when you block those. It does not stop an infinite loop. If you want a script to do literally nothing harmful, run it in `scan` mode which blocks everything by default.
 
