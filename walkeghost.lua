@@ -3,9 +3,21 @@ M._VERSION = "1.0.0"
 M._AUTHOR = "Weegee_MLG / Skin Walke Team"
 
 local rawget, rawset, setmt, getmt = rawget, rawset, setmetatable, getmetatable
+local rawequal = rawequal
 local sformat, srep = string.format, string.rep
 local ins, cat = table.insert, table.concat
 local clock = (os and os.clock) or function() return 0 end
+
+local STD = {}
+for _, k in ipairs({
+	"print", "warn", "error", "assert", "pcall", "xpcall", "select", "type", "typeof",
+	"tostring", "tonumber", "pairs", "ipairs", "next", "unpack", "setmetatable",
+	"getmetatable", "rawequal", "rawlen", "collectgarbage",
+	"string", "table", "math", "coroutine", "os", "bit32", "utf8", "buffer",
+	"task", "Vector3", "Vector2", "CFrame", "Color3", "UDim", "UDim2", "Instance",
+	"Enum", "BrickColor", "Ray", "Region3", "TweenInfo", "NumberSequence",
+	"ColorSequence", "NumberRange", "Rect", "Random", "tick", "wait", "delay", "spawn",
+}) do STD[k] = true end
 
 local WATCH = {
 	getgenv = "env", getrenv = "env", getsenv = "env", getfenv = "env", setfenv = "env",
@@ -49,7 +61,7 @@ local function argstr(n, ...)
 end
 
 local function newLog()
-	return { entries = {}, hits = {}, reads = {}, flags = {} }
+	return { entries = {}, hits = {}, reads = {}, flags = {}, notices = {} }
 end
 
 local function record(log, cat_, name, kind, detail, isCall)
@@ -91,19 +103,22 @@ local function flagIfSuspicious(log, name, cat_, n, ...)
 			if low:find(k, 1, true) then matched = k break end
 		end
 		if matched then
-			log.flags[#log.flags + 1] = sformat("network call to %q via %s", matched, name)
+			log.flags[#log.flags + 1] = sformat("sends data to %q via %s", matched, name)
 		else
-			log.flags[#log.flags + 1] = sformat("sends data to the internet via %s", name)
+			log.notices[#log.notices + 1] = sformat("uses a network function (%s). this is not proof of data theft, just that it can send data", name)
 		end
 	end
-	if cat_ == "file" and (name == "writefile" or name == "appendfile") then
-		log.flags[#log.flags + 1] = sformat("writes to a file via %s", name)
+	if cat_ == "file" and (name == "writefile" or name == "appendfile" or name == "delfile" or name == "delfolder") then
+		log.notices[#log.notices + 1] = sformat("writes to the filesystem via %s", name)
 	end
 	if cat_ == "persist" then
-		log.flags[#log.flags + 1] = sformat("queues code to survive teleport via %s", name)
+		log.flags[#log.flags + 1] = sformat("queues code to run after a teleport via %s. this is how a script keeps itself running across places", name)
 	end
-	if name == "getgenv" or name == "getrenv" or name == "getreg" then
-		log.flags[#log.flags + 1] = sformat("reaches for the global environment via %s", name)
+	if name == "getgenv" or name == "getrenv" or name == "getreg" or name == "getgc" then
+		log.notices[#log.notices + 1] = sformat("reads the global environment via %s", name)
+	end
+	if cat_ == "hook" then
+		log.flags[#log.flags + 1] = sformat("replaces or hooks a function via %s. check what it is hooking", name)
 	end
 end
 
@@ -128,20 +143,35 @@ function M.new(opts)
 	opts = opts or {}
 	local base = opts.base or (getgenv and getgenv()) or _G
 	local policy = opts.policy or {}
+	local sealed = opts.sealed and true or false
+	local extra = opts.expose
 	local log = newLog()
 
 	local store = {}
 	local cache = {}
 	local env
 
+	local function reachable(k)
+		if rawget(store, k) ~= nil then return true end
+		if not sealed then return true end
+		if STD[k] then return true end
+		if extra and extra[k] then return true end
+		if WATCH[k] then return true end
+		return false
+	end
 	local function envGet(k)
 		if rawget(store, k) ~= nil then return store[k] end
+		if sealed and not (STD[k] or (extra and extra[k]) or WATCH[k]) then return nil end
 		return base[k]
 	end
 	local function envSet(k, v)
 		rawset(store, k, v)
 		record(log, "access", k, "write", "set " .. tostring(k) .. " = " .. shorten(v))
 	end
+
+	local realGetfenv = rawget(base, "getfenv") or getfenv
+	local realSetfenv = rawget(base, "setfenv") or setfenv
+	local realGetrawmt = rawget(base, "getrawmetatable") or getrawmetatable
 
 	local safe = {}
 	safe.rawget = function(t, k)
@@ -154,15 +184,39 @@ function M.new(opts)
 	end
 	safe.rawequal = function(a, b) return rawequal(a, b) end
 	safe.getfenv = function(lvl)
+		if type(lvl) == "function" then return env end
 		if lvl == nil or lvl == 0 or lvl == 1 then return env end
-		local ok, e = pcall(getfenv, lvl)
-		if ok and (e == base or e == _G) then return env end
-		return ok and e or env
+		if type(realGetfenv) == "function" then
+			local ok, e = pcall(realGetfenv, lvl)
+			if ok and e ~= nil and e ~= base and e ~= _G then return e end
+		end
+		return env
 	end
-	safe.setfenv = function(fn, e) return fn end
+	safe.setfenv = function(fn, e)
+		local target = e
+		if target == nil or target == base or target == _G or target == store then
+			target = env
+		end
+		if type(fn) == "number" then
+			if type(realSetfenv) ~= "function" then return env end
+			local ok = pcall(realSetfenv, fn + 1, target)
+			return ok and target or env
+		end
+		if type(fn) == "function" then
+			if type(realSetfenv) == "function" then
+				local ok = pcall(realSetfenv, fn, target)
+				if ok then return fn end
+			end
+			return fn
+		end
+		return fn
+	end
 	safe.getrawmetatable = function(t)
 		if t == env then return nil end
-		if getrawmetatable then return getrawmetatable(t) end
+		if type(realGetrawmt) == "function" then
+			local ok, mt = pcall(realGetrawmt, t)
+			if ok then return mt end
+		end
 		return getmt(t)
 	end
 
@@ -179,6 +233,7 @@ function M.new(opts)
 			local c = cache[k]
 			if c ~= nil then return c end
 			if rawget(store, k) ~= nil then return store[k] end
+			if sealed and not reachable(k) then return nil end
 			local real = base[k]
 			local w = WATCH[k]
 			if w then
@@ -199,32 +254,66 @@ function M.new(opts)
 	api.env = env
 	api.log = log
 	api.store = store
+	api.sealed = sealed
+
+	local function bind(fn)
+		local applied = false
+		if setfenv then
+			local ok = pcall(setfenv, fn, env)
+			if ok then applied = true end
+		end
+		return fn, applied
+	end
 
 	function api.run(src, chunkname, ...)
+		local name = chunkname or "=walkeghost"
 		if type(src) == "function" then
-			local fn = src
-			if setfenv then pcall(setfenv, fn, env) end
+			local fn, applied = bind(src)
+			if not applied and not setfenv then
+				return false, "cannot set environment on a function value in this runtime; pass source as a string instead"
+			end
 			return pcall(fn, ...)
 		end
-		local loader = (opts.loadstring) or loadstring or load
-		if not loader then return false, "no loadstring available" end
-		local fn, err = loader(src, chunkname or "=walkeghost")
-		if not fn then return false, err end
-		if setfenv then
-			pcall(setfenv, fn, env)
-		else
-			local ok, e = pcall(function()
-				local f2 = load(src, chunkname or "=walkeghost", "t", env)
-				if f2 then fn = f2 end
-			end)
-			if not ok then return false, e end
+
+		local fn, err
+
+		if load then
+			local ok, f, e = pcall(load, src, name, "t", env)
+			if ok and f then
+				fn = f
+			elseif ok and not f then
+				err = e
+			end
 		end
+
+		if not fn then
+			local loader = opts.loadstring or loadstring or load
+			if not loader then return false, err or "no loadstring available" end
+			local f, e = loader(src, name)
+			if not f then return false, e or err end
+			fn = f
+			local _, applied = bind(fn)
+			if not applied then
+				if load then
+					local ok2, f2 = pcall(load, src, name, "t", env)
+					if ok2 and f2 then
+						fn = f2
+					else
+						return false, "loaded the chunk but could not apply the sandbox environment (no setfenv and no load with env)"
+					end
+				else
+					return false, "loaded the chunk but could not apply the sandbox environment (no setfenv and no load with env)"
+				end
+			end
+		end
+
 		return pcall(fn, ...)
 	end
 
 	function api.report()
 		local out = {}
 		out[#out + 1] = "== Walke Ghost =="
+		out[#out + 1] = "environment: " .. (sealed and "sealed" or "read-through")
 		local total = #log.entries
 		out[#out + 1] = sformat("watched actions: %d", total)
 		out[#out + 1] = ""
@@ -251,16 +340,25 @@ function M.new(opts)
 			end
 		end
 
-		if #log.flags > 0 then
-			out[#out + 1] = ""
-			out[#out + 1] = "warnings:"
+		local function dumpUnique(list, prefix)
 			local seen = {}
-			for _, f in ipairs(log.flags) do
+			for _, f in ipairs(list) do
 				if not seen[f] then
 					seen[f] = true
-					out[#out + 1] = "  ! " .. f
+					out[#out + 1] = prefix .. f
 				end
 			end
+		end
+
+		if #log.flags > 0 then
+			out[#out + 1] = ""
+			out[#out + 1] = "red flags:"
+			dumpUnique(log.flags, "  ! ")
+		end
+		if #log.notices > 0 then
+			out[#out + 1] = ""
+			out[#out + 1] = "notices:"
+			dumpUnique(log.notices, "  - ")
 		end
 		return cat(out, "\n"), log
 	end
@@ -271,13 +369,17 @@ end
 function M.scan(src, opts)
 	opts = opts or {}
 	local pol = opts.policy or { ["*"] = "block" }
-	local g = M.new({ base = opts.base, policy = pol, loadstring = opts.loadstring })
+	local g = M.new({
+		base = opts.base, policy = pol, loadstring = opts.loadstring,
+		sealed = opts.sealed, expose = opts.expose,
+	})
 	local ok, err = g.run(src, opts.chunkname)
 	local text, log = g.report()
 	return {
 		ok = ok,
 		err = (not ok) and err or nil,
 		flags = log.flags,
+		notices = log.notices,
 		report = text,
 		log = log,
 	}
@@ -286,10 +388,17 @@ end
 function M.watch(src, opts)
 	opts = opts or {}
 	local pol = opts.policy or { ["*"] = "allow" }
-	local g = M.new({ base = opts.base, policy = pol, loadstring = opts.loadstring })
+	local g = M.new({
+		base = opts.base, policy = pol, loadstring = opts.loadstring,
+		sealed = opts.sealed, expose = opts.expose,
+	})
 	local ok, err = g.run(src, opts.chunkname)
 	local text, log = g.report()
-	return { ok = ok, err = (not ok) and err or nil, report = text, log = log }, g
+	return {
+		ok = ok, err = (not ok) and err or nil,
+		flags = log.flags, notices = log.notices,
+		report = text, log = log,
+	}, g
 end
 
 return M
