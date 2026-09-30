@@ -42,7 +42,7 @@ if #result.flags > 0 then
 end
 ```
 
-For the script in `example.lua` (a fake aimbot that saves your UserId and sends it to a Discord webhook) the report looks like this:
+The report usually looks like this (JUST AN EXAMPLE):
 
 ```
 == Walke Ghost ==
@@ -56,8 +56,6 @@ warnings:
   ! writes to a file via writefile
   ! network call to "discord" via request
 ```
-
-Notice it caught the Discord webhook even though the URL was hidden inside a table argument. That is the whole point.
 
 ## Run a script for real but watched
 
